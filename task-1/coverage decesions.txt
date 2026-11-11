@@ -1,0 +1,5 @@
+**Not covered, and why:** performance/load (no NFRs given; separate exercise); security pen testing; cross platforms testing; every fee configuration (belongs in unit/config tests; I use one flat and one percentage); cosmetic polish.
+
+**Automated regression:** TC01-TC08, TC10, TC11 at API level plus UI  for TC01. They are deterministic, money-critical and run every build. **Manual/exploratory:** TC09, TC12 content, error wording and usability.
+
+**Safe to release when:** all P1 cases pass with zero open Critical/High defects; boundary and idempotency cases verified in a production-like environment; open questions are answered or assumptions signed off by BA/PO; UAT signed off for this journey; a rollback or feature-flag plan exists; and a low-value post-release smoke transfer passes.

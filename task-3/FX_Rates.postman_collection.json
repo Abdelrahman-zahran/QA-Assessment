@@ -1,0 +1,174 @@
+{
+  "info": {
+    "name": "FX Rates API (open.er-api.com)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Get latest rates for base (data-driven)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const base = pm.iterationData.get('base') || pm.environment.get('defaultBase');",
+              "pm.collectionVariables.set('currentBase', base);",
+              "pm.collectionVariables.set('refCurrency', base === pm.environment.get('refCurrencyPrimary') ? pm.environment.get('refCurrencyAlt') : pm.environment.get('refCurrencyPrimary'));"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const base = pm.iterationData.get('base') || pm.environment.get('defaultBase');",
+              "const targets = (pm.iterationData.get('targets') || pm.environment.get('defaultTargets')).split('|');",
+              "const maxMs = Number(pm.environment.get('maxResponseMs'));",
+              "const minCount = Number(pm.environment.get('minCurrencyCount'));",
+              "const schema = {\"type\": \"object\", \"required\": [\"result\", \"base_code\", \"rates\", \"time_last_update_unix\", \"time_next_update_unix\"], \"properties\": {\"result\": {\"type\": \"string\"}, \"base_code\": {\"type\": \"string\"}, \"time_last_update_unix\": {\"type\": \"number\"}, \"time_next_update_unix\": {\"type\": \"number\"}, \"rates\": {\"type\": \"object\", \"additionalProperties\": {\"type\": \"number\"}}}};",
+              "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+              "pm.test('Response time under budget', () => pm.expect(pm.response.responseTime).to.be.below(maxMs));",
+              "pm.test('Content-Type is JSON', () => pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'));",
+              "const body = pm.response.json();",
+              "pm.test('Body matches expected shape', () => pm.response.to.have.jsonSchema(schema));",
+              "pm.test('result is success and base_code echoes request', () => { pm.expect(body.result).to.eql('success'); pm.expect(body.base_code).to.eql(base); });",
+              "pm.test('Base currency rate is exactly 1', () => pm.expect(body.rates[base]).to.eql(1));",
+              "pm.test('Provider returns a broad currency set', () => pm.expect(Object.keys(body.rates).length).to.be.at.least(minCount));",
+              "pm.test('Expected targets present with sane values', () => {",
+              "  targets.forEach(t => { if (t === base) return;",
+              "    pm.expect(body.rates, t).to.have.property(t);",
+              "    pm.expect(body.rates[t], t).to.be.a('number').and.to.be.above(0);",
+              "    pm.expect(Number.isFinite(body.rates[t]), t).to.be.true; });",
+              "});",
+              "pm.test('Rates are fresh (updated within 48h) and next update is after last', () => {",
+              "  const nowS = Date.now()/1000;",
+              "  pm.expect(nowS - body.time_last_update_unix).to.be.below(48*3600);",
+              "  pm.expect(body.time_next_update_unix).to.be.above(body.time_last_update_unix);",
+              "});",
+              "// Capture: rate base -> reference currency, reused in the next request as an inverse-consistency check",
+              "const ref = pm.collectionVariables.get('refCurrency');",
+              "pm.collectionVariables.set('capturedBase', base);",
+              "pm.collectionVariables.set('capturedRate', body.rates[ref]);",
+              ""
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/v6/latest/{{currentBase}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "v6",
+            "latest",
+            "{{currentBase}}"
+          ]
+        }
+      }
+    },
+    {
+      "name": "2. Inverse consistency using captured rate",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const base = pm.collectionVariables.get('capturedBase');",
+              "const captured = Number(pm.collectionVariables.get('capturedRate'));",
+              "const tol = Number(pm.environment.get('inverseTolerance'));",
+              "const body = pm.response.json();",
+              "pm.test('Status 200 and response time ok', () => { pm.response.to.have.status(200); pm.expect(pm.response.responseTime).to.be.below(Number(pm.environment.get('maxResponseMs'))); });",
+              "pm.test('Inverse rates are consistent (A->B x B->A ~ 1 within tolerance)', () => {",
+              "  const inverse = body.rates[base];",
+              "  pm.expect(inverse).to.be.a('number').and.above(0);",
+              "  pm.expect(Math.abs(captured * inverse - 1)).to.be.below(tol);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/v6/latest/{{refCurrency}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "v6",
+            "latest",
+            "{{refCurrency}}"
+          ]
+        }
+      }
+    },
+    {
+      "name": "3. Negative: unsupported/malformed currency",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.collectionVariables.set('invalid_code', pm.iterationData.get('invalid_code') || pm.environment.get('defaultInvalidCode'));"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const maxMs = Number(pm.environment.get('maxResponseMs'));",
+              "pm.test('Rejected with a 4xx client error (not 200, not 5xx)', () => pm.expect(pm.response.code).to.be.within(400, 499));",
+              "pm.test('Response time under budget', () => pm.expect(pm.response.responseTime).to.be.below(maxMs));",
+              "let body = {};",
+              "pm.test('Error body is JSON', () => { body = pm.response.json(); });",
+              "pm.test('result is \"error\" and an error-type is given', () => { pm.expect(body.result).to.eql('error'); pm.expect(body).to.have.property('error-type'); });",
+              "pm.test('CRITICAL: no rates are returned for an invalid code (no silent fallback)', () => pm.expect(body).to.not.have.property('rates'));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/v6/latest/{{invalid_code}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "v6",
+            "latest",
+            "{{invalid_code}}"
+          ]
+        }
+      }
+    }
+  ],
+  "variable": []
+}
